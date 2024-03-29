@@ -1,0 +1,78 @@
+use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
+use memprocfs::{Vmm, FLAG_NOCACHE};
+
+#[derive(Debug)]
+struct Vector2D {
+    x: i32,
+    y: i32,
+}
+
+fn main() {
+    let vmm_path = "C:\\MemProcFS\\vmm.dll".to_string();
+    let vmm_args = vec!["", "-device", "fpga"];
+
+    let vmm = match Vmm::new(&vmm_path, &vmm_args) {
+        Ok(vmm) => vmm,
+        Err(err) => {
+            eprintln!("Error: Failed to connect to FPGA device: {:?}", err);
+            return;
+        }
+    };
+
+    let process = match vmm.process_from_name("winlogon.exe") {
+        Ok(mut process) => {
+            process.pid |= 0x80000000;
+            process
+        }
+        Err(err) => {
+            eprintln!("Error: Failed to find process: {:?}", err);
+            return;
+        }
+    };
+
+    let address = match process.get_proc_address("win32kbase.sys", "gptCursorAsync") {
+        Ok(addr) => addr,
+        Err(err) => {
+            eprintln!("Error: Failed to find address: {:?}", err);
+            return;
+        }
+    };
+
+    println!("gptCursorAsync address -> {:#x}", address);
+
+    // Add a variable to keep track of the loop count
+    let mut loop_count = 0;
+
+    loop {
+        let cursor_position = match process.mem_read_as::<Vector2D>(address, FLAG_NOCACHE) {
+            Ok(position) => position,
+            Err(err) => {
+                eprintln!("Error: Failed to read cursor position: {:?}", err);
+                // Break out of the loop on error
+                break;
+            }
+        };
+
+        println!("Cursor Position: {:?}", cursor_position);
+
+        let set_cursor_result = unsafe {
+            SetCursorPos(cursor_position.x, cursor_position.y)
+        };
+
+        if let Err(err) = set_cursor_result {
+            eprintln!("Error: Failed to set cursor position: {:?}", err);
+            // Break out of the loop on error
+            break;
+        }
+
+        // Increment loop count
+        loop_count += 1;
+
+        // Break the loop after 10 iterations for demonstration purposes
+        if loop_count >= 10 {
+            break;
+        }
+    }
+
+    println!("Loop ended.");
+}
